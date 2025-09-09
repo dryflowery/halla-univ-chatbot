@@ -45,24 +45,8 @@ chatbot = ChatbotStream(
 # 채팅
 class Message(BaseModel):
     message: str
-
-@router.post("/chat")
-async def chat(message: Message):
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[
-                {"role": "user", "content": message.message}
-            ],
-
-        )
-        answer = response.choices[0].message.content
-        return {"response": answer.strip()}
-    except Exception as e:
-        print(f"OpenAI API error: {e}")  
-        raise HTTPException(status_code=500, detail=str(e))
     
-@router.post("/stream-chat")
+@router.post("/chat")
 async def stream_chat(user_input: UserRequest):
     # 1) 사용자 메시지를 원본 문맥에 추가
     chatbot.add_user_message_in_context(user_input.message)
@@ -74,6 +58,9 @@ async def stream_chat(user_input: UserRequest):
         "VI": "Vui lòng trả lời bằng tiếng Việt một cách nhẹ nhàng.",
         "JPN": "日本語で丁寧に温かく答えてください。",
         "CHN": "请用中文亲切地回答。",
+        "UZB": "Iltimos, o‘zbek tilida samimiy va hurmat bilan javob bering.",
+        "MNG": "Монгол хэлээр эелдэг, дулаахан хариулна уу.",
+        "IDN": "Tolong jawab dengan ramah dan hangat dalam bahasa Indonesia."
     }
     instruction = instruction_map.get(user_input.language, instruction_map["KOR"])
     chatbot.context[-1]["content"] += " " + instruction
