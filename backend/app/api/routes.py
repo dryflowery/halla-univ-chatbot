@@ -304,32 +304,32 @@ async def stream_chat(user_input: UserRequest):
             loading = True
             for event in stream:
                 match event.type:
-                    case "response.created":
-                        loading = True
-                        yield "⏳ GPT가 응답을 준비 중입니다..."
-                        await asyncio.sleep(0)
+                    # case "response.created":
+                    #     loading = True
+                    #     yield "⏳ GPT가 응답을 준비 중입니다..."
+                    #     await asyncio.sleep(0)
                     case "response.output_text.delta":
-                        if loading:
-                            yield "\n[� 응답 시작됨 ↓]"
-                            loading = False
+                        # if loading:
+                        #     yield "\n[� 응답 시작됨 ↓]"
+                        #     loading = False
                         yield f"{event.delta}"
                         await asyncio.sleep(0)
-                    case "response.in_progress":
-                        yield "\n[🌀 응답 생성 중...]\n"
+                    # case "response.in_progress":
+                    #     yield "\n[🌀 응답 생성 중...]\n"
                     case "response.output_item.done":
                         item = event.item
                         if item.type == "message" and item.role == "assistant":
                             for part in item.content:
                                 if getattr(part, "type", None) == "output_text":
                                     completed_text = part.text
-                    case "response.completed":
-                        yield "\n"
-                    case "response.failed":
-                        yield "❌ 응답 생성 실패"
-                    case "error":
-                        yield "⚠️ 스트리밍 중 에러 발생!"
-                    case _:
-                        yield f"\n[📬 기타 이벤트 감지: {event.type}]"
+                    # case "response.completed":
+                    #     yield "\n"
+                    # case "response.failed":
+                    #     yield "❌ 응답 생성 실패"
+                    # case "error":
+                    #     yield "⚠️ 스트리밍 중 에러 발생!"
+                    # case _:
+                    #     yield f"\n[📬 기타 이벤트 감지: {event.type}]"
         except Exception as e:
             yield f"\nStream Error: {str(e)}"
         finally:
@@ -338,4 +338,3 @@ async def stream_chat(user_input: UserRequest):
             print(context_to_stream)
 
     return StreamingResponse(generate_with_tool(), media_type="text/plain")
-
