@@ -3,6 +3,7 @@ import json
 import requests
 from pprint import pprint
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 from bs4 import BeautifulSoup
@@ -13,7 +14,7 @@ tools = [
             {
             "type": "function",
             "name": "search_internet",
-            "description": "한라대학교에 대해 묻는 것에 대한 검색, 혹은 인터넷 검색을 사용자가 원하면 실행",
+            "description": "Searches the internet based on user input and retrieves relevant information",
             "strict": True,
             "parameters": {
                 "type": "object",
@@ -135,81 +136,51 @@ def _prefer_halla_site_query(user_input: str, context_info: str | None = None) -
     # 미매칭 시 라우팅 없음
     return None
 
-def search_internet(user_input: str,chat_context=None) -> str:
-    
+def search_internet(user_input: str, chat_context=None) -> str:
+    start_ts = time.time()
+    print(f"[WEB][START] query='{user_input}' chat_ctx={'Y' if chat_context else 'N'}")
     try:
-        print(f"📨 웹 검색 요청 시작: '{user_input}'")
-
-        # ✅ 사용자 입력을 input_text 컨텍스트로 변환
-       
         if chat_context:
-            print("🔄 문맥 처리 시작")
-        # 최근 N개의 메시지만 포함 (너무 많은 문맥은 토큰을 낭비할 수 있음)
-            recent_messages = chat_context[-4:]  # 최근 3개 메시지만 사용
-            print(f"📋 최근 메시지 수: {len(recent_messages)}")
-            # 문맥 정보를 추가 컨텍스트로 구성
-            for i, msg in enumerate(recent_messages):
-                    print(f"📝 메시지 {i + 1} 역할: {msg.get('role', 'unknown')}")
-                    content_preview = str(msg.get('content', ''))[:50] + "..." if len(str(msg.get('content', ''))) > 50 else str(msg.get('content', ''))
-                    print(f"📄 내용 미리보기: {content_preview}")
-
+            print("[WEB] context available -> trimming recent messages")
+            recent_messages = chat_context[-4:]
             context_info = "\n".join([
-                f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" 
-                for msg in recent_messages if msg.get('role') != 'system'
+                f"{m.get('role','unknown')}: {m.get('content','')}" for m in recent_messages if m.get('role') != 'system'
             ])
-            
-            
-            # 규칙 기반 라우팅: 특정 요구 시 한라대 특정 URL 포함
-            preferred = _prefer_halla_site_query(user_input, context_info)
-            if preferred:
-                search_text = preferred
-            else:
-                # 일반 케이스: LLM이 검색어를 재작성
-                search_text = client.responses.create(
-                    model="gpt-4o",
-                    input=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_text",
-                                "text": (
-                                    f"{user_input}\n\n[대화 문맥]: {context_info} 를 참고해(이전 문맥에 이어서 질문을 한것 같다면 그것과 관련해서 검색어 생성) 검색어를 간결한 단어 조합으로 새로 만들어라. "
-                                    "가능하면 site:halla.ac.kr 또는 관련 공식 페이지 URL을 포함하라."
-                                ),
-                            }
-                        ]
-                    }
-                ],
-            ).output_text
-            print("문맥DEBUG!!!!!!!!!!!!!!!!!!")
-            print(search_text)
-            print("\n\n\n\n")
         else:
-            # chat_context가 없을 때도 규칙 기반 라우팅 적용
-            preferred = _prefer_halla_site_query(user_input)
-            search_text = preferred if preferred else user_input 
-            print("없는 문맥DEBUG!!!!!!!!!!!!!!!!!!")
-            print(search_text)
-            print("\n\n\n\n")
-        context_input = [
-        {
+            recent_messages = []
+            context_info = ""
+
+        preferred = _prefer_halla_site_query(user_input, context_info if context_info else None)
+        if preferred:
+            search_text = preferred
+        else:
+            # 재작성 요청
+            rewrite_prompt = (
+                f"{user_input}\n\n[대화 문맥]: {context_info} 를 참고해 (이전 문맥과 연결된 후속 질문이면 연관된 핵심 키워드 포함) "
+                "간결한 검색어 조합을 새로 만들어라. 가능하면 site:halla.ac.kr 또는 관련 공식 URL 포함."
+            )
+            rewrite_resp = client.responses.create(
+                model="gpt-4o",
+                input=[{"role": "user", "content": [{"type": "input_text", "text": rewrite_prompt}]}],
+                text={"format": {"type": "text"}},
+            )
+            search_text = rewrite_resp.output_text.strip()
+        print(f"[WEB] final_search_text='{search_text}'")
+
+        context_input = [{
             "role": "user",
             "content": [{"type": "input_text", "text": search_text}]
-        }
-    ]
+        }]
 
+        call_ts = time.time()
         response = client.responses.create(
-            model="gpt-4o",
-            input=context_input,  
+            model=model.advanced,
+            input=context_input,
             text={"format": {"type": "text"}},
             reasoning={},
             tools=[{
                 "type": "web_search_preview",
-                "user_location": {
-                    "type": "approximate",
-                    "country": "KR"
-                },
+                "user_location": {"type": "approximate", "country": "KR"},
                 "search_context_size": "medium"
             }],
             tool_choice={"type": "web_search_preview"},
@@ -218,66 +189,34 @@ def search_internet(user_input: str,chat_context=None) -> str:
             top_p=1,
             store=True
         )
-        
-        # ✅ 웹 검색 수행 여부 로그
-        if any(getattr(item, "type", None) == "web_search_call" for item in getattr(response, "output", [])):
-            print("✅ 🔍 웹 검색이 실제로 수행되었습니다.")
-        else:
-            print("⚠️ 웹 검색이 수행되지 않았습니다.")
+        print(f"[WEB] openai.responses.create elapsed={time.time()-call_ts:.2f}s total={time.time()-start_ts:.2f}s")
 
-        # ✅ 응답 메시지 추출
-        print("DEBUG: Extracting message object from response.output")
+        did_call = any(getattr(item, "type", None) == "web_search_call" for item in getattr(response, "output", []))
+        print(f"[WEB] search_call_performed={did_call}")
 
-        # 1. message 객체 추출 (ResponseOutputMessage)
-        message = next(
-            (item for item in response.output if getattr(item, "type", None) == "message"),
-            None
-        )
+        message = next((item for item in response.output if getattr(item, "type", None) == "message"), None)
         if not message:
-            print("DEBUG: No message found")
             return "❌ GPT 응답 메시지를 찾을 수 없습니다."
-
-        # 2. content 중 output_text 블록 추출
-        print("DEBUG: Looking for output_text block in message.content")
-        content_block = next(
-            (block for block in message.content if getattr(block, "type", None) == "output_text"),
-            None
-        )
+        content_block = next((block for block in message.content if getattr(block, "type", None) == "output_text"), None)
         if not content_block:
-            print("DEBUG: output_text block not found")
             return "❌ GPT 응답 내 output_text 항목을 찾을 수 없습니다."
-
-        # 3. 텍스트 추출
         output_text = getattr(content_block, "text", "").strip()
-        print(f"DEBUG: Extracted output_text: {output_text}")
-
-        # 4. 출처(annotation) 파싱
         annotations = getattr(content_block, "annotations", [])
-        print(f"DEBUG: Annotations: {annotations}")
         citations = []
         for a in annotations:
             if getattr(a, "type", None) == "url_citation":
-                print(f"DEBUG: Found url_citation: {a}")
-            title = getattr(a, "title", "출처")
-            url = getattr(a, "url", "")
-            citations.append(f"[{title}]({url})")
-
-        # 5. 텍스트 + 출처 조합
+                title = getattr(a, "title", "출처")
+                url = getattr(a, "url", "")
+                if url:
+                    citations.append(f"[{title}]({url})")
         result = output_text
-        print(f"DEBUG: Collected citations: {citations}")
         if citations:
             result += "\n\n📎 출처:\n" + "\n".join(citations)
-        
-        return result+"이 응답 형식 그대로 출력하세요 대답과 출처가 형식 그대로 다음대답에 담겨야합니다.엄밀하게."
-
-    
-
+        print(f"[WEB][END] success total_elapsed={time.time()-start_ts:.2f}s")
+        return result + "\n[WEB_METADATA]elapsed={:.2f}s did_call={}".format(time.time()-start_ts, did_call)
     except Exception as e:
-        return f"🚨 파싱 중 오류 발생: {str(e)}"
-
-
-    except Exception as e:
-        return f"🚨 오류 발생: {str(e)}"
+        print(f"[WEB][ERROR] {e} total_elapsed={time.time()-start_ts:.2f}s")
+        return f"🚨 웹검색 오류: {str(e)}"
 
 
 def _parse_date_input(date_text: Optional[str]) -> datetime.date:
@@ -307,16 +246,22 @@ def get_halla_cafeteria_menu(date: Optional[str] = None, meal: Optional[str] = N
     """원주 한라대 학생식당 주간 식단 페이지를 파싱하여 특정 날짜/끼니 메뉴를 반환.
     제한: 서버가 주차 변경을 JS/폼으로 처리하면 과거/미래 주 선택은 어려울 수 있음. 이 경우 현재 주만 반환.
     """
+    t0 = time.time()
+    print(f"[CAF][START] date={date} meal={meal}")
     try:
         target_date = _parse_date_input(date)
     except Exception as e:
+        print(f"[CAF][ERROR] date-parse {e}")
         return f"❌ 날짜 해석 실패: {e}"
 
     url = "https://www.halla.ac.kr/kr/211/subview.do"
     try:
+        net_t = time.time()
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
+        print(f"[CAF] fetch ok elapsed={time.time()-net_t:.2f}s status={resp.status_code}")
     except Exception as e:
+        print(f"[CAF][ERROR] fetch {e}")
         return f"❌ 페이지 요청 실패: {e}"
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -398,7 +343,9 @@ def get_halla_cafeteria_menu(date: Optional[str] = None, meal: Optional[str] = N
                 return result
         return result
 
+    parse_t = time.time()
     found = pick_table_and_parse()
+    print(f"[CAF] primary-parse elapsed={time.time()-parse_t:.2f}s result={found}")
 
     # 폴백: 표 파싱 실패 시 페이지 텍스트에서 라인 기반 추론(부정확할 수 있음)
     if all(v is None for v in found.values()):
@@ -434,15 +381,21 @@ def get_halla_cafeteria_menu(date: Optional[str] = None, meal: Optional[str] = N
     if meal in ("조식", "중식", "석식"):
         val = found.get(meal)
         if not val:
-            return header + f"\n- {meal}: 정보 없음 (페이지 구조 변경 또는 해당 끼니 미운영)\n원문: {url}"
-        return header + f"\n- {meal}: {val}\n원문: {url}"
+            out = header + f"\n- {meal}: 정보 없음 (페이지 구조 변경 또는 해당 끼니 미운영)\n원문: {url}"
+            print(f"[CAF][END] elapsed={time.time()-t0:.2f}s meal-miss")
+            return out
+        out = header + f"\n- {meal}: {val}\n원문: {url}"
+        print(f"[CAF][END] elapsed={time.time()-t0:.2f}s meal-hit")
+        return out
 
     # 3끼 모두 반환
     lines_out = []
     for k in ["조식", "중식", "석식"]:
         v = found.get(k)
         lines_out.append(f"- {k}: {v if v else '정보 없음'}")
-    return header + "\n" + "\n".join(lines_out) + f"\n원문: {url}"
+    out = header + "\n" + "\n".join(lines_out) + f"\n원문: {url}"
+    print(f"[CAF][END] elapsed={time.time()-t0:.2f}s all-meals")
+    return out
 
 class FunctionCalling:
     def __init__(self, model, available_functions=None):
@@ -460,16 +413,27 @@ class FunctionCalling:
     def analyze(self, user_message, tools):
         if not user_message or user_message.strip() == "":
             return {"type": "error", "message": "입력이 비어있습니다. 질문을 입력해주세요."}
-    
-            # 1. 모델 호출
-        response = client.responses.create(
-            model=model.o3_mini,
-            input=user_message,
-            tools=tools,
-            tool_choice="auto",
-            
-        )
-        return response.output
+        # 구조화된 input 사용 (tool 선택 정확도 향상)
+        structured_input = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": user_message}
+                ],
+            }
+        ]
+        try:
+            response = client.responses.create(
+                model=model.o3_mini,
+                input=structured_input,
+                tools=tools,
+                tool_choice="auto",
+            )
+            print("[DEBUG][analyze] raw_output_types:",[getattr(o,'type',None) for o in response.output])
+            return response.output
+        except Exception as e:
+            print(f"[DEBUG][analyze] tool analyze failed: {e}")
+            return []
     
 
     def run(self, analyzed,context):

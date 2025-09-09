@@ -3,6 +3,7 @@ import os
 import time
 import sys
 from pathlib import Path
+from . import character
 
 # 실행 방식과 무관하게 패키지 루트를 인지시키기 위한 부트스트랩
 # (예: `python chatbotDirectory/chatbot.py`로 직접 실행하는 경우 대비)
@@ -210,8 +211,7 @@ class ChatbotStream:
            {
                "role": "system",
                "content": (
-               "당신은 분류기입니다. 반드시 'True' 또는 'False'로만 대답하세요."
-               "지금은 무조건 True 만 내보내세요."
+                   character.decide_rag
                ),
            },
            {

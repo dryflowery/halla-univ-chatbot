@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from openai import OpenAI
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -6,13 +7,18 @@ import pytz
 # 추가: dotenv 임포트
 from dotenv import load_dotenv
 
-# 추가: apikey.env 파일 로드
-load_dotenv(".env")  # 상위 디렉토리의 apikey.env 파일
+# 추가: apikey.env 파일을 패키지 기준 경로로 안전하게 로드
+# common.py (app/chatbotDirectory/common.py) 기준으로 상위(app)/apikey.env를 가리킵니다.
+_BASE_DIR = Path(__file__).resolve().parent.parent  # app/
+_DOTENV_PATH = _BASE_DIR / "apikey.env"
+load_dotenv(_DOTENV_PATH)
 
 @dataclass(frozen=True)
 class Model: 
     basic: str = "gpt-3.5-turbo-1106"
-    advanced: str = "gpt-4-1106-preview"
+    # web_search_preview 툴 미지원 모델(gpt-4-1106-preview) → gpt-4.1로 교체
+    # 필요 시 mini 모델로 조정 가능: gpt-4.1-mini
+    advanced: str = "gpt-4.1"
     o3_mini: str ="o3-mini"
     o1: str = "o1"
 
@@ -24,7 +30,7 @@ class EmbeddingModel:
     
 model = Model()
 embedding_model = EmbeddingModel()
-api_key=os.getenv("OPENAI_API_KEY")  # 이제 정상적으로 로드됨
+api_key = os.getenv("OPENAI_API_KEY")  # 이제 경로와 무관하게 로드됨
 client = OpenAI(api_key=api_key, max_retries=1)
 
 def makeup_response(message, finish_reason="ERROR"):

@@ -32,7 +32,11 @@ client = OpenAI(api_key=api_key)
 # 예시: 전역 또는 엔드포인트 내부에서 인스턴스 생성
 chatbot = ChatbotStream(
     model=model.advanced,
-    system_role="당신은 학교 생활, 학과 정보, 행사 등 사용자가 궁금한 점이 있으면 아는 범위 안에서 대답합니다. 단 절대 거짓내용을 말하지 않습니다. 아는 범위에서 말하고 부족한 부분은 인정하세요.당신은 실시간으로 검색하는 기능이있습니다. ",
+    system_role="""당신은 학교 생활, 학과 정보, 행사 등 사용자가 궁금한 점이 있으면 아는 범위 안에서 대답합니다. 단 절대 거짓내용을 말하지 않습니다. 아는 범위에서 말하고 부족한 부분은 인정하세요.
+    당신은 실시간으로 검색하는 기능이있습니다.
+    당신은 한라대 공지사항을 탐색할 수 있습니다.
+    당신은 한라대 학식메뉴를 탐색할 수 있습니다.
+    당신은 한라대 학사일정을 탐색할 수 있습니다.""",
     instruction="당신은 사용자의 질문에 답변하는 역할을 합니다.",
     user="한라대 대학생",
     assistant="memmo"
@@ -50,8 +54,7 @@ async def chat(message: Message):
             messages=[
                 {"role": "user", "content": message.message}
             ],
-            temperature=0.5,
-            max_tokens=512,
+
         )
         answer = response.choices[0].message.content
         return {"response": answer.strip()}
@@ -127,59 +130,59 @@ async def stream_chat(user_input: UserRequest):
 
     has_funcs = len(func_outputs) > 0
 
-    # 4-1) 학식/식단 질의 보강 호출
+    # 4-1) 학식/식단 질의 보강 호출 (LLM 누락 대비 + 결과 요약 system 주입)
     lowered = user_input.message.lower()
-    if ("학식" in lowered) or ("식단" in lowered) or ("점심" in lowered) or ("저녁" in lowered) or ("메뉴" in lowered) or ("조식" in lowered):
-        if not has_funcs:
-            try:
-                meal_pref = "중식"
-                if ("조식" in lowered) or ("아침" in lowered):
-                    meal_pref = "조식"
-                elif ("석식" in lowered) or ("저녁" in lowered):
-                    meal_pref = "석식"
-                date_pref = "오늘"
-                if "내일" in lowered:
-                    date_pref = "내일"
-                else:
-                    import re as _re
-                    m = _re.search(r"(\d{4}[./-]\d{1,2}[./-]\d{1,2})", user_input.message)
-                    if m:
-                        date_pref = m.group(1)
-                caf_args = {"date": date_pref, "meal": meal_pref}
-                from chatbotDirectory.functioncalling import get_halla_cafeteria_menu
-                caf_out = get_halla_cafeteria_menu(**caf_args)
-                call_id = "cafeteria_auto"
-                func_msgs.extend([
-                    {
-                        "type": "function_call",
-                        "call_id": call_id,
-                        "name": "get_halla_cafeteria_menu",
-                        "arguments": json.dumps(caf_args, ensure_ascii=False),
-                    },
-                    {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": str(caf_out),
-                    },
-                ])
-                func_outputs.append(str(caf_out))
-                has_funcs = True
-            except Exception as e:
-                print(f"[보강 호출 실패] get_halla_cafeteria_menu: {e}")
+    cafeteria_keywords = any(k in lowered for k in ["학식", "식단", "점심", "저녁", "메뉴", "조식", "석식"])
+    already_called_cafeteria = any(m.get("name") == "get_halla_cafeteria_menu" for m in func_msgs if m.get("type") == "function_call")
+
+
+    if cafeteria_keywords and not already_called_cafeteria:
+        try:
+            print("[DEBUG] Cafeteria fallback engaged (missing function call)")
+            meal_pref = "중식"
+            if any(x in lowered for x in ["조식", "아침"]):
+                meal_pref = "조식"
+            elif any(x in lowered for x in ["석식", "저녁"]):
+                meal_pref = "석식"
+            date_pref = "오늘"
+            if "내일" in lowered:
+                date_pref = "내일"
+            else:
+                import re as _re
+                m = _re.search(r"(\d{4}[./-]\d{1,2}[./-]\d{1,2})", user_input.message)
+                if m:
+                    date_pref = m.group(1)
+            caf_args = {"date": date_pref, "meal": meal_pref}
+            get_cafeteria_fn = func_calling.available_functions.get("get_halla_cafeteria_menu")
+            if not get_cafeteria_fn:
+                raise RuntimeError("get_halla_cafeteria_menu not registered")
+            caf_out = get_cafeteria_fn(**caf_args)
+            call_id = "cafeteria_auto"
+            func_msgs.extend([
+                {"type": "function_call", "call_id": call_id, "name": "get_halla_cafeteria_menu", "arguments": json.dumps(caf_args, ensure_ascii=False)},
+                {"type": "function_call_output", "call_id": call_id, "output": str(caf_out)},
+            ])
+            func_outputs.append(str(caf_out))
+            has_funcs = True
+            # 간단 요약 블록 (LLM 호출 없이 규칙 기반 축약)
+            first_lines = "\n".join([ln for ln in str(caf_out).splitlines()[:8]])
+            cafeteria_summary_block = f"<학식요약>요청일자={date_pref}, 식사={meal_pref}\n{first_lines}</학식요약>"
+        except Exception as e:
+            print(f"[보강 호출 실패] get_halla_cafeteria_menu: {e}")
 
     # 5) 최종 스트리밍에 사용할 컨텍스트 구성
     base_context = chatbot.to_openai_context(chatbot.context[:])
     temp_context = base_context[:]
 
-    temp_context.append({
-        "role": "system",
-        "content": (
-            f"이것은 사용자 쿼리입니다: {user_input.message}\n"
-            "다음 정보를 사용자가 원하는 대답에 맞게 통합해 전달하세요.\n"
-            "- 함수호출 결과: 있으면 반영\n- 기억검색 결과: 있으면 반영/ 직접적으로 함수 호출 여부에 대해 사용자에게 언급하지 마세요."
-        ),
-    })
-    temp_context.append({"role": "system", "content": chatbot.instruction})
+    # 이후 하나의 system 메시지로 합칠 섹션을 수집
+    sections: list[str] = []
+    query_guidance = (
+        f"이것은 사용자 쿼리입니다: {user_input.message}\n"
+        "다음 정보를 사용자가 원하는 대답에 맞게 통합해 전달하세요.\n"
+        "- 함수호출 결과: 있으면 반영\n- 기억검색 결과: 있으면 반영 / 함수 호출 존재 자체는 언급 금지"
+    )
+    sections.append("[사용자쿼리지침]\n" + query_guidance)
+    sections.append("[일반지침]\n" + chatbot.instruction)
 
     if has_rag:
         # 5-1) 기억검색 결과를 그대로 넣지 않고, 먼저 LLM으로 사용자 질문에 맞게 가공/요약
@@ -198,17 +201,23 @@ async def stream_chat(user_input: UserRequest):
         sanitized_rag = _sanitize_text(rag_ctx)
 
         condense_prompt = [
-            {"role": "system", "content": (
-                "당신은 긴 문서 묶음을 사용자의 질문에 맞게 가공하는 어시스턴트입니다. "
-                "아래 요구사항을 만족하세요: \n"
-                "ㅇ원문내용의 특수문자를 지우고 그대로 출력\n"
-                "사용자 질문에 근접한 내용을 <반영>...</반영> 태그안에 집어넣어 표시 "
-                "- 모호하거나 불명확하면 '관련 근거 없음'이라고 표시\n"
-                "최대한 원문 그대로 출력"
-            )},
-            {"role": "user", "content": f"사용자 질문: {user_input.message}"},
-            {"role": "system", "content": "다음은 기억검색 원문입니다. <기억검색>...</기억검색> 내부만 참고하여 가공 결과를 생성하세요."},
-            {"role": "system", "content": f"<기억검색>{sanitized_rag}</기억검색>"},
+            {
+                "role": "system",
+                "content": (
+                    f"""
+당신은 긴 규정/세칙 문서 묶음에서 사용자 질문과 직접 관련된 부분만 추출·표시하는 어시스턴트입니다.
+규칙:
+1) 원문 전체는 <기억검색> 태그 안에 있습니다.
+2) 사용자 질문과 직접 관련된 근거 문장/단락만 <반영>...</반영> 태그 안에 그대로(가능한 수정 최소화) 넣으세요.
+3) 근거를 찾기 어렵거나 모호하면 <반영>관련 근거 없음</반영> 만 넣으세요.
+4) 원문 구조(조/항/호 번호)는 유지하고 불필요한 요약은 하지 마세요.
+5) 원문 밖 추론/창작 금지.
+
+사용자 질문: {user_input.message}
+<기억검색>{sanitized_rag}</기억검색>
+"""
+                ),
+            }
         ]
 
         # 디버그: condense_prompt와 rag_ctx 출력
@@ -228,30 +237,67 @@ async def stream_chat(user_input: UserRequest):
             print(condensed)
         except Exception as _e:
             # 요약 실패 시 원문을 짧게 잘라 사용
-            print(f"[DEBUG] condense failed: {_e}")
+            print(f"[DEBUG] 문서 요약 실패: {_e}")
             condensed = sanitized_rag[:3000]
 
-        temp_context.append({
-            "role": "system",
-            "content": (
-                "기억검색 결과입니다. <기억검색> </기억검색> 태그 내부 내용을 보고 사용자의 원하는 쿼리에 맞게 대답하세요."
-            )
-        })
-        temp_context.append({
-            "role": "system",
-            "content": f"<기억검색>{condensed}</기억검색>"
-        })
+        rag_guidance = (
+            "기억검색 결과입니다. <반영> </반영> 태그 내부 내용을 보고 사용자의 원하는 쿼리에 맞게 대답하세요. "
+            "<기억검색></기억검색> 태그는 참조용이며 태그 밖 임의 창작 금지"
+        )
+        sections.append("[기억검색지침]\n" + rag_guidance)
+        sections.append("[기억검색]\n<기억검색>\n" + condensed + "\n</기억검색>")
 
     if has_funcs:
-        temp_context.append({"role": "system", "content": "인터넷 검색결과니다. <인터넷 검색> <인터넷검색> 태그 내부내용 바탕으로 대답에 응하세요./"
-                             "<인터넷검색>{func_msgs}<인터넷검색> 단 기억검색결과가 주가 되어야합니다"})
+        # 함수 실행 결과 문자열 구성
+        formatted_blocks = []
+        # func_msgs는 [call, output, call, output, ...] 구조이므로 2개씩 묶어 처리
+        try:
+            for i in range(0, len(func_msgs), 2):
+                call = func_msgs[i]
+                if i + 1 < len(func_msgs):
+                    output = func_msgs[i + 1]
+                else:
+                    output = {"output": "(출력 누락)"}
+                if call.get("type") != "function_call":
+                    continue
+                name = call.get("name")
+                args = call.get("arguments")
+                out_text = output.get("output", "") if isinstance(output, dict) else str(output)
+                # 너무 긴 출력은 잘라냄 (안전)
+                max_len = 4000
+                if len(out_text) > max_len:
+                    out_text = out_text[:max_len] + "...<truncated>"
+                formatted_blocks.append(f"<function name='{name}' args='{args}'>\n{out_text}\n</function>")
+        except Exception as _fmt_e:
+            print(f"[DEBUG] function result formatting error: {_fmt_e}")
+        functions_block = "\n".join(formatted_blocks) if formatted_blocks else "(함수 결과 포맷 없음)"
+
+        # 학식 보강 요약 블록이 있다면 포함
+        try:
+            if 'cafeteria_summary_block' in locals() and cafeteria_summary_block:
+                functions_block += f"\n{cafeteria_summary_block}"
+        except Exception:
+            pass
+
+        func_guidance = (
+            "다음은 함수(검색/메뉴 등) 호출 결과입니다. <함수결과> 태그 내부 내용만 사실 근거로 사용하고 "
+            "'함수 호출'이라는 표현은 사용하지 말며 거짓 정보 생성 금지"
+        )
+        sections.append("[함수결과지침]\n" + func_guidance)
+        sections.append("[함수결과]\n<함수결과>\n" + functions_block + "\n</함수결과>")
        
 
     if has_rag and has_funcs:
-        temp_context.append({
-            "role": "system",
-            "content": " 함수 호출 결과와 검색 결과를 모두 활용해, 두 문맥이 어떻게 도출되었는지 한 줄로 설명하고 사용자 질문에 답하세요. ",
-        })
+        merge_instruction = (
+            "위 기억검색 근거(<기억검색>)와 함수/검색 결과(<함수결과>)를 대조하여 모순 없게 핵심 답 먼저, 필요한 근거 축약 제시. 근거 없으면 명시."
+        )
+        sections.append("[통합지침]\n" + merge_instruction)
+
+    # 단일 system 메시지로 병합 추가
+    temp_context.append({
+        "role": "system",
+        "content": "\n\n".join(sections)
+    })
 
     # 둘 다 없으면 원본 컨텍스트만 사용해 일반 응답
     context_to_stream = temp_context if (has_rag or has_funcs) else base_context
