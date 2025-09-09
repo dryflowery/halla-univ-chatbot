@@ -1,32 +1,33 @@
-version: '3.8'
+version: "3.8"
+
 services:
+  backend:
+    image: "dryflowery/halla-univ-chatbot-backend:latest"
+    container_name: chatbot_backend
+    expose:
+      - "3000"
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+    networks:
+      - app-network
+    restart: always
+
   nginx:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
+    image: "dryflowery/halla-univ-chatbot-nginx:latest"
+    container_name: chatbot_nginx
+    depends_on:
+      - backend
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/chatbot.conf:/etc/nginx/conf.d/chatbot.conf:ro
       - /etc/letsencrypt/:/etc/letsencrypt/:ro
-      - ./frontend:/usr/share/nginx/html:ro
     networks:
       - app-network
-    restart: always 
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    expose:
-      - "3000"
-    environment:
-      - PORT=3000
-    env_file:
-      - ./backend/.env
-    networks:
-      - app-network
-    restart: always 
+    restart: always
+
 networks:
   app-network:
     driver: bridge
