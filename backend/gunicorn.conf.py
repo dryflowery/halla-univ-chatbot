@@ -1,6 +1,6 @@
 # 워커 수
 import multiprocessing
-workers = multiprocessing.cpu_count() * 2 + 1
+workers = 1
 
 # 워커로 uvicorn 사용
 worker_class = "uvicorn.workers.UvicornWorker"
