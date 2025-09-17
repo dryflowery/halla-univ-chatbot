@@ -1,6 +1,6 @@
 # 워커 수
 import multiprocessing
-# workers = multiprocessing.cpu_count() * 2 + 1
+workers = multiprocessing.cpu_count() * 2 + 1
 
 # 워커로 uvicorn 사용
 worker_class = "uvicorn.workers.UvicornWorker"
@@ -12,7 +12,6 @@ errorlog = "-"
 
 # 임시
 timeout = 0
-workers = 1
 
 ########################################## 수정 예정 ##########################################
 # 바인드 주소 및 포트 
