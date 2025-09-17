@@ -223,23 +223,30 @@ def _parse_date_input(date_text: Optional[str]) -> datetime.date:
     today = datetime.now().date()
     if not date_text:
         return today
-    s = date_text.strip()
+    s = str(date_text).strip()
+    # 상대 날짜 지원
     if s in ("오늘", "today"):
         return today
     if s in ("내일", "tomorrow"):
         return today + timedelta(days=1)
-    # Normalize separators
-    s = s.replace("/", ".").replace("-", ".")
-    # Try YYYY.MM.DD
-    try:
-        return datetime.strptime(s, "%Y.%m.%d").date()
-    except Exception:
-        pass
-    # Try YYYY.MM.D
-    try:
-        return datetime.strptime(s, "%Y.%m.%d").date()
-    except Exception:
-        raise ValueError("날짜 형식은 YYYY-MM-DD 또는 YYYY.MM.DD 또는 '오늘/내일'을 사용하세요.")
+    if s in ("어제", "yesterday"):
+        return today - timedelta(days=1)
+    if s in ("모레", "day after tomorrow"):
+        return today + timedelta(days=2)
+    # Normalize separators and parse flexibly (YYYY.M.D or YYYY.MM.DD)
+    s_norm = s.replace("/", ".").replace("-", ".")
+    parts = s_norm.split(".")
+    if len(parts) == 3 and all(p.isdigit() for p in parts):
+        y, m, d = map(int, parts)
+        return datetime(year=y, month=m, day=d).date()
+    # 한국어 표기: 9월 7일 (연도 생략 시 올해)
+    m = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", s)
+    if m:
+        y = today.year
+        month = int(m.group(1))
+        day = int(m.group(2))
+        return datetime(year=y, month=month, day=day).date()
+    raise ValueError("날짜 형식은 YYYY-MM-DD / YYYY.M.D / '오늘/내일/어제'를 사용하세요.")
 
 
 def get_halla_cafeteria_menu(date: Optional[str] = None, meal: Optional[str] = None) -> str:

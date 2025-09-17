@@ -119,18 +119,21 @@ async def stream_chat(user_input: UserRequest):
 
     # 4-1) 학식/식단 질의 보강 호출 (LLM 누락 대비 + 결과 요약 system 주입)
     lowered = user_input.message.lower()
-    cafeteria_keywords = any(k in lowered for k in ["학식", "식단", "점심", "저녁", "메뉴", "조식", "석식"])
+    cafeteria_keywords = any(k in lowered for k in ["학식", "식단", "점심", "저녁", "메뉴", "조식", "석식", "아침", "오늘 메뉴", "밥 뭐"])
     already_called_cafeteria = any(m.get("name") == "get_halla_cafeteria_menu" for m in func_msgs if m.get("type") == "function_call")
 
 
     if cafeteria_keywords and not already_called_cafeteria:
         try:
             print("[DEBUG] Cafeteria fallback engaged (missing function call)")
-            meal_pref = "중식"
+            # 끼니가 명시되면 해당 끼니, 아니면 전체 반환하도록 None 허용
+            meal_pref = None
             if any(x in lowered for x in ["조식", "아침"]):
                 meal_pref = "조식"
             elif any(x in lowered for x in ["석식", "저녁"]):
                 meal_pref = "석식"
+            elif "점심" in lowered or "중식" in lowered:
+                meal_pref = "중식"
             date_pref = "오늘"
             if "내일" in lowered:
                 date_pref = "내일"
@@ -153,7 +156,7 @@ async def stream_chat(user_input: UserRequest):
             has_funcs = True
             # 간단 요약 블록 (LLM 호출 없이 규칙 기반 축약)
             first_lines = "\n".join([ln for ln in str(caf_out).splitlines()[:8]])
-            cafeteria_summary_block = f"<학식요약>요청일자={date_pref}, 식사={meal_pref}\n{first_lines}</학식요약>"
+            cafeteria_summary_block = f"<학식요약>요청일자={date_pref}, 식사={meal_pref or '전체'}\n{first_lines}</학식요약>"
         except Exception as e:
             print(f"[보강 호출 실패] get_halla_cafeteria_menu: {e}")
 
@@ -182,7 +185,8 @@ async def stream_chat(user_input: UserRequest):
             # 태그 조기 종료 방지
             txt = txt.replace("</기억검색>", "[/기억검색]")
             # 과도한 길이 클램프 (필요시 조정)
-            max_len = 12000
+            # 표/주석 단위의 넓은 맥락을 충분히 담기 위해 상한을 확대
+            max_len = 30000
             return txt[:max_len]
 
         sanitized_rag = _sanitize_text(rag_ctx)
@@ -192,13 +196,17 @@ async def stream_chat(user_input: UserRequest):
                 "role": "system",
                 "content": (
                     f"""
-당신은 긴 규정/세칙 문서 묶음에서 사용자 질문과 직접 관련된 부분만 추출·표시하는 어시스턴트입니다.
-규칙:
+당신은 긴 규정/세칙 문서 묶음에서 사용자 질문과 직접 관련된 부분을 "넓은 맥락"으로 추출·표시하는 어시스턴트입니다.
+규칙(넓은 맥락 포함):
 1) 원문 전체는 <기억검색> 태그 안에 있습니다.
-2) 사용자 질문과 직접 관련된 근거 문장/단락만 <반영>...</반영> 태그 안에 그대로(가능한 수정 최소화) 넣으세요.
-3) 근거를 찾기 어렵거나 모호하면 <반영>관련 근거 없음</반영> 만 넣으세요.
-4) 원문 구조(조/항/호 번호)는 유지하고 불필요한 요약은 하지 마세요.
-5) 원문 밖 추론/창작 금지.
+2) 사용자 질문과 직접 관련된 근거는 <반영>...</반영> 태그 안에 담되, 다음을 포함하세요.
+   - 표/목록/번호 조항은 해당 항목의 머리글(제목/헤더)과 인접 행·항까지 함께 포함(최소 ±5~10줄 맥락).
+   - "주)" 형태의 주석/비고가 붙은 경우 해당 주석 전부 포함.
+   - 학점·과목·배분영역·트랙과 같은 숫자/항목은 표의 열 머리말과 같이 포함(헤더+행 세트).
+3) 사용자가 특정 번호(예: 1번, 2번)를 언급했지만 모호할 경우, 후보 번호 2~3개를 모두 포함하되 각 블록 앞에 [후보] 표기.
+4) 관련 근거가 충분치 않다고 판단되면, 상위 단락(조/항/표 제목) 단위까지 확장하여 최소 15줄 이상을 담고, 지나친 요약을 피하세요.
+5) 원문 구조(조/항/호/표 제목)는 유지하고 임의 재작성 금지. 반드시 원문을 거의 그대로 인용하세요.
+6) 원문 밖 추론/창작 금지.
 
 사용자 질문: {user_input.message}
 <기억검색>{sanitized_rag}</기억검색>
@@ -222,10 +230,42 @@ async def stream_chat(user_input: UserRequest):
             ).output_text.strip()
             print("==== [DEBUG] condensed ====")
             print(condensed)
+            # 결과가 지나치게 짧으면(줄 수<15 또는 길이<1000자) 넓은 맥락 재시도
+            if (condensed.count("\n") < 15) or (len(condensed) < 1000):
+                print("[DEBUG] condensed too short -> retry with broader extraction")
+                broader_prompt = [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"""
+당신은 사용자 질문과 관련된 표/번호조항/주석의 전체 맥락을 넓게 포함해 추출합니다.
+반드시 다음을 지키세요:
+- <반영>...</반영> 안에 헤더(표 제목/열 머리말) + 관련 행/항 전부와 해당 주석(주)까지 포함.
+- 최소 25줄 이상, 가능하면 관련 블록을 통째로 포함(불필요한 요약 금지).
+- 모호하면 후보 블록 2~3개를 [후보]로 나누어 모두 포함.
+원문: <기억검색>{sanitized_rag}</기억검색>
+질문: {user_input.message}
+"""
+                        ),
+                    }
+                ]
+                try:
+                    condensed2 = client.responses.create(
+                        model=model.advanced,
+                        input=broader_prompt,
+                        text={"format": {"type": "text"}},
+                    ).output_text.strip()
+                    print("==== [DEBUG] condensed(broader) ====")
+                    print(condensed2)
+                    # 더 길고 풍부하면 교체
+                    if (condensed2.count("\n") >= condensed.count("\n")) and (len(condensed2) > len(condensed)):
+                        condensed = condensed2
+                except Exception as _e2:
+                    print(f"[DEBUG] broader extraction failed: {_e2}")
         except Exception as _e:
             # 요약 실패 시 원문을 짧게 잘라 사용
             print(f"[DEBUG] 문서 요약 실패: {_e}")
-            condensed = sanitized_rag[:3000]
+            condensed = sanitized_rag[:6000]
 
         rag_guidance = (
             "기억검색 결과입니다. <반영> </반영> 태그 내부 내용을 보고 사용자의 원하는 쿼리에 맞게 대답하세요. "
@@ -234,9 +274,12 @@ async def stream_chat(user_input: UserRequest):
         sections.append("[기억검색지침]\n" + rag_guidance)
         sections.append("[기억검색]\n<기억검색>\n" + condensed + "\n</기억검색>")
 
+    web_status = None  # 'ok' | 'empty-or-error' | 'not-run'
     if has_funcs:
-        # 함수 실행 결과 문자열 구성
-        formatted_blocks = []
+        # 함수 실행 결과 문자열 구성 (웹검색 결과는 분리 수집)
+        formatted_blocks_other = []
+        formatted_blocks_web = []
+        web_outputs: list[str] = []
         # func_msgs는 [call, output, call, output, ...] 구조이므로 2개씩 묶어 처리
         try:
             for i in range(0, len(func_msgs), 2):
@@ -254,10 +297,16 @@ async def stream_chat(user_input: UserRequest):
                 max_len = 4000
                 if len(out_text) > max_len:
                     out_text = out_text[:max_len] + "...<truncated>"
-                formatted_blocks.append(f"<function name='{name}' args='{args}'>\n{out_text}\n</function>")
+                # 웹검색 상태 수집
+                if name == "search_internet":
+                    web_outputs.append(out_text)
+                    formatted_blocks_web.append(f"<function name='{name}' args='{args}'>\n{out_text}\n</function>")
+                else:
+                    formatted_blocks_other.append(f"<function name='{name}' args='{args}'>\n{out_text}\n</function>")
         except Exception as _fmt_e:
             print(f"[DEBUG] function result formatting error: {_fmt_e}")
-        functions_block = "\n".join(formatted_blocks) if formatted_blocks else "(함수 결과 포맷 없음)"
+        web_functions_block = "\n".join(formatted_blocks_web) if formatted_blocks_web else ""
+        other_functions_block = "\n".join(formatted_blocks_other) if formatted_blocks_other else ""
 
         # 학식 보강 요약 블록이 있다면 포함
         try:
@@ -266,17 +315,68 @@ async def stream_chat(user_input: UserRequest):
         except Exception:
             pass
 
+        # 웹검색 상태 판단
+        if not web_outputs:
+            web_status = "not-run"
+        else:
+            # 하나라도 의미 있는 텍스트가 있으면 ok, 모두 오류/비어있음이면 empty-or-error
+            def _is_error_or_empty(txt: str) -> bool:
+                t = (txt or "").strip()
+                if not t:
+                    return True
+                err_keywords = ["🚨", "❌", "오류", "error", "검색 결과를 찾을 수", "no result", "did_call=False"]
+                return any(k.lower() in t.lower() for k in err_keywords)
+            all_bad = all(_is_error_or_empty(t) for t in web_outputs)
+            web_status = "empty-or-error" if all_bad else "ok"
+
+        # 지침: 웹검색 결과는 따로 표기하고, 우회/문의 안내만 있는 경우 참고만 하도록 명시
+        web_guidance = (
+            "다음은 인터넷 검색결과입니다. 공식 근거가 아니므로 참고용으로만 사용하세요. "
+            "검색이 안되어 우회/문의 안내만 있을 경우, 무시하고 이 내용은'참조만' 하세요. 반드시 기억검색 근거를 우선 반영하세요. 참조란 안내 전화번호 사이트만을 반영하는것을 말합니다 "
+        )
+        sections.append("[웹검색지침]\n" + web_guidance)
+        if web_functions_block:
+            sections.append("[인터넷 검색결과]\n<인터넷검색>\n" + web_functions_block + "\n</인터넷검색>")
+
         func_guidance = (
-            "다음은 함수(검색/메뉴 등) 호출 결과입니다. <함수결과> 태그 내부 내용만 사실 근거로 사용하고 "
-            "'함수 호출'이라는 표현은 사용하지 말며 거짓 정보 생성 금지"
+            "다음은 함수(검색/메뉴 등) 호출 결과입니다. <함수결과> 태그 내부 내용은 참고용이며, 반드시 아래 기억검색(<기억검색>) 근거를 우선 답변에 반영하세요. "
+            "'함수 호출'이라는 표현은 사용하지 말고, 거짓 정보 생성 금지."
         )
         sections.append("[함수결과지침]\n" + func_guidance)
-        sections.append("[함수결과]\n<함수결과>\n" + functions_block + "\n</함수결과>")
+        if other_functions_block:
+            sections.append("[함수결과]\n<함수결과>\n" + other_functions_block + "\n</함수결과>")
+        # 웹검색 상태 표시 (있을 때만)
+        if web_status and web_status != "not-run":
+            status_kr = {
+                "ok": "정상",
+                "empty-or-error": "결과없음/오류",
+                "not-run": "실행안함",
+            }[web_status]
+            sections.append("[웹검색상태]\n" + status_kr)
+
+        # 웹검색이 없거나 실패했을 때의 답변 지침 (불필요한 말 금지)
+        if web_status in ("empty-or-error", "not-run"):
+            if has_rag:
+                sections.append(
+                    "[웹검색결과없음지침]\n인터넷 검색결과는 참고용입니다. 공식 규정은 아래 기억검색(<기억검색>) 근거를 반드시 우선 확인하세요. 검색이 되지 않거나 문의 안내만 있을 경우, 해당 내용은 참고만 하시고 반드시 아래 규정 근거를 답변에 반영하세요."
+                )
+            else:
+                sections.append(
+                    "[웹검색결과없음지침]\n웹검색 결과는 없었습니다. 관련 근거를 찾지 못했음을 한 문장으로 간단히 알리고, 필요한 추가 정보를 한 문장으로 요청하세요."
+                )
        
 
     if has_rag and has_funcs:
+        # 웹검색이 비어도(결과없음/오류) 기억검색이 있으면 '정보 없음'이라고 결론내리지 말라는 규칙 추가
+        extra = " 웹검색이 결과없음/오류여도 기억검색이 존재하면 '정보 없음'이라고 하지 말고 기억검색 근거로 답할 것."
+        if web_status == "empty-or-error":
+            extra_note = extra
+        else:
+            extra_note = ""
         merge_instruction = (
-            "위 기억검색 근거(<기억검색>)와 함수/검색 결과(<함수결과>)를 대조하여 모순 없게 핵심 답 먼저, 필요한 근거 축약 제시. 근거 없으면 명시."
+            "위 기억검색 근거(<기억검색>)와 인터넷 검색결과(<인터넷검색>), 기타 함수결과(<함수결과>)를 대조하여 모순 없이 답하세요. "
+            "핵심 답 먼저 제시하고, 필요한 근거만 축약 인용. 인터넷 검색결과는 참고용이며, 우회/문의 안내만 있을 경우 '참조만' 하고 -참조란 안내 전화번호 사이트만을 반영하는것을 말합니다   "
+            "반드시 기억검색 근거를 우선 반영하세요. 근거가 없으면 그 사실을 명시." + extra_note
         )
         sections.append("[통합지침]\n" + merge_instruction)
 
