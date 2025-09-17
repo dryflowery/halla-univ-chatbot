@@ -1,5 +1,6 @@
 # 워커 수
 import multiprocessing
+# workers = multiprocessing.cpu_count() * 2 + 1
 workers = 1
 
 # 워커로 uvicorn 사용
@@ -15,7 +16,7 @@ errorlog = "-"
 bind = "0.0.0.0:3000"
 
 # 타임아웃 
-timeout = 60
+# timeout = 60
 
 # 배포 버전에서 삭제
 # reload = True
