@@ -90,7 +90,7 @@ async def stream_chat(user_input: UserRequest):
             # 안전 기본값 보강
             if func_name == "get_halla_cafeteria_menu":
                 func_args.setdefault("date", "오늘")
-                func_args.setdefault("meal", "중식")
+                # meal은 지정하지 않으면 전체 끼니를 반환
 
             func_response = (
                 func_to_call(chat_context=chatbot.context[:], **func_args)

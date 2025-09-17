@@ -37,7 +37,7 @@ tools = [
             "strict": True,
             "parameters": {
                 "type": "object",
-                "required": ["date", "meal"],
+                "required": ["date"],
                 "properties": {
                     "date": {
                         "type": "string",
@@ -46,7 +46,7 @@ tools = [
                     "meal": {
                         "type": "string",
                         "enum": ["조식", "중식", "석식"],
-                        "description": "조회할 끼니. 기본값은 '중식'입니다.",
+                        "description": "조회할 끼니. 지정하지 않으면 전체 끼니를 보여줍니다.",
                     }
                 },
                 "additionalProperties": False
@@ -201,6 +201,7 @@ def search_internet(user_input: str, chat_context=None) -> str:
         if not content_block:
             return "❌ GPT 응답 내 output_text 항목을 찾을 수 없습니다."
         output_text = getattr(content_block, "text", "").strip()
+        print(f"[WEB][DEBUG] LLM output_text:\n{output_text}")
         annotations = getattr(content_block, "annotations", [])
         citations = []
         for a in annotations:
@@ -388,20 +389,23 @@ def get_halla_cafeteria_menu(date: Optional[str] = None, meal: Optional[str] = N
     if meal in ("조식", "중식", "석식"):
         val = found.get(meal)
         if not val:
-            out = header + f"\n- {meal}: 정보 없음 (페이지 구조 변경 또는 해당 끼니 미운영)\n원문: {url}"
+            out = header + f"\n[{meal}] 정보 없음\n추가 사항: 원문: {url}"
             print(f"[CAF][END] elapsed={time.time()-t0:.2f}s meal-miss")
+            print(f"[CAF][DEBUG] LLM output_text:\n{out}")
             return out
-        out = header + f"\n- {meal}: {val}\n원문: {url}"
+        out = header + f"\n[{meal}] {val}\n추가 사항: 원문: {url}"
         print(f"[CAF][END] elapsed={time.time()-t0:.2f}s meal-hit")
+        print(f"[CAF][DEBUG] LLM output_text:\n{out}")
         return out
 
     # 3끼 모두 반환
     lines_out = []
     for k in ["조식", "중식", "석식"]:
         v = found.get(k)
-        lines_out.append(f"- {k}: {v if v else '정보 없음'}")
-    out = header + "\n" + "\n".join(lines_out) + f"\n원문: {url}"
+        lines_out.append(f"[{k}] {v if v else '정보 없음'}")
+    out = header + "\n" + "\n".join(lines_out) + f"\n추가 사항: 원문: {url}"
     print(f"[CAF][END] elapsed={time.time()-t0:.2f}s all-meals")
+    print(f"[CAF][DEBUG] LLM output_text:\n{out}")
     return out
 
 class FunctionCalling:
