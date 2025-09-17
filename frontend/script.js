@@ -307,7 +307,18 @@ const appendBotMessage = async (userMsg) => {
   messages.appendChild(msgElement);
   messages.scrollTop = messages.scrollHeight;
 
-  const botMsgElement = msgElement.querySelector(".message.bot");   // 실제 메시지로 교체
+  const botMsgElement = msgElement.querySelector(".message.bot");   
+
+  // 10초 단위로 wait message 변경
+  let elapsedTime = 1;
+  let messagesForLang = waitMsgDict[language];
+  botMsgElement.innerHTML = `<span class="wait-msg">${messagesForLang[0]}</span><span class="loader"></span>`;
+
+  const waitMessageInterval = setInterval(() => {
+    messagesForLang = waitMsgDict[language];
+    botMsgElement.innerHTML = `<span class="wait-msg">${messagesForLang[Math.min(elapsedTime, messagesForLang.length - 1)]}</span><span class="loader"></span>`;
+    elapsedTime++;
+  }, 10000);
 
   try {
     // request
@@ -321,9 +332,10 @@ const appendBotMessage = async (userMsg) => {
     let botMsg = "";
     const reader = resp.body.getReader();
     const decoder = new TextDecoder("utf-8");
-    
+
     while (true) {
       const { done, value } = await reader.read();
+      clearInterval(waitMessageInterval); 
 
       if (done) {
         break;

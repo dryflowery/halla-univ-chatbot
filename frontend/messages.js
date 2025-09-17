@@ -44,14 +44,64 @@ const defaultMsgDict = {
 }
 
 const waitMsgDict = {
-    "KOR": "응답 생성 중입니다...",
-    "ENG": "Generating response...",
-    "VNM": "Đang tạo phản hồi...",
-    "CHN": "正在生成回复...",
-    "UZB": "Javob yaratilmoqda...",
-    "MNG": "Хариу үүсгэж байна...",
-    "IDN": "Sedang membuat respons..."
+    "KOR": [
+        "응답 생성 중입니다... ⏳",
+        "조금 고민 중이에요 🤔",
+        "품질 검토 중입니다 🧐",
+        "최적의 답을 찾는 중 🔍",
+        "거의 다 왔습니다 🙏",
+        "오래 걸리면 다시 시도해 보셔도 좋아요 💡"
+    ],
+    "ENG": [
+        "Generating response... ⏳",
+        "Thinking it over 🤔",
+        "Reviewing quality 🧐",
+        "Looking for the best answer 🔍",
+        "Almost there 🙏",
+        "If it takes too long, feel free to try again 💡"
+    ],
+    "VNM": [
+        "Đang tạo phản hồi... ⏳",
+        "Đang suy nghĩ một chút 🤔",
+        "Đang kiểm tra chất lượng 🧐",
+        "Đang tìm câu trả lời tối ưu 🔍",
+        "Sắp xong rồi 🙏",
+        "Nếu mất quá nhiều thời gian, bạn có thể thử lại 💡"
+    ],
+    "CHN": [
+        "正在生成回复... ⏳",
+        "正在稍微思考 🤔",
+        "正在进行质量检查 🧐",
+        "正在寻找最佳答案 🔍",
+        "快完成了 🙏",
+        "如果花太长时间，可以重新尝试 💡"
+    ],
+    "UZB": [
+        "Javob yaratilmoqda... ⏳",
+        "Biroz o‘ylab qolyapman 🤔",
+        "Sifatni tekshirmoqda 🧐",
+        "Eng yaxshi javobni qidirmoqda 🔍",
+        "Tez orada tugaydi 🙏",
+        "Juda uzoq cho‘zilsa, qayta urinib ko‘rishingiz mumkin 💡"
+    ],
+    "MNG": [
+        "Хариу үүсгэж байна... ⏳",
+        "Бага зэрэг бодож байна 🤔",
+        "Чанарыг шалгаж байна 🧐",
+        "Хамгийн сайн хариултыг хайж байна 🔍",
+        "Бараг дууслаа 🙏",
+        "Хэрэв удаан байвал дахин оролдож болно 💡"
+    ],
+    "IDN": [
+        "Sedang membuat jawaban... ⏳",
+        "Sedang mempertimbangkan sedikit 🤔",
+        "Sedang meninjau kualitas 🧐",
+        "Sedang mencari jawaban terbaik 🔍",
+        "Hampir selesai 🙏",
+        "Jika terlalu lama, silakan coba lagi 💡"
+    ]
 };
+
 
 const errorMsgDict = {
     "KOR": "오류가 발생했습니다",
